@@ -343,5 +343,32 @@ def demo_schema_evolution(conn, after_rollback, mo):
     return (conn, current)
 
 
+@app.cell
+def wrapup(current, mo):
+    return mo.md(r"""
+    ## Summary
+
+    | Concept | What we saw | Delta Lake equivalent |
+    |---------|-------------|----------------------|
+    | Immutable files | INSERT → new Parquet | `add` action in `_delta_log` |
+    | Delete tracking | `-delete.parquet` appears | Deletion vectors / `remove` actions |
+    | Snapshot log | `ducklake_snapshots()` | JSON files in `_delta_log/` |
+    | Time travel | `AT (VERSION => N)` | `VERSION AS OF N` |
+    | Change feed | `ducklake_table_changes()` | Delta Change Data Feed |
+    | ACID rollback | `BEGIN / ROLLBACK` | Same — within an engine session |
+    | Schema evolution | `ALTER TABLE ADD COLUMN` | Same — tracked in transaction log |
+
+    ### When to use what?
+
+    **Delta Lake** — distributed workloads, Spark/Databricks ecosystem,
+    cloud-scale data, existing Iceberg/Delta infrastructure.
+
+    **DuckLake** — local development, SQL-native teams, smaller scale,
+    or anywhere you want a simpler operational story with no file-based metadata headaches.
+
+    *Both solve the same fundamental problem. The lakehouse pattern is here to stay.*
+    """)
+
+
 if __name__ == "__main__":
     app.run()
