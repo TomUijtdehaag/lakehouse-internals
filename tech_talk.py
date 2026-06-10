@@ -226,5 +226,93 @@ def demo_delete(conn, data, mo):
     return (conn, after_delete)
 
 
+@app.cell
+def demo_snapshots(conn, after_delete, mo):
+    snapshots = conn.execute("FROM ducklake_snapshots('lake')").df()
+
+    mo.vstack([
+        mo.md(r"""
+        ## Concept: The Snapshot Log
+
+        Every write (INSERT, DELETE, UPDATE, schema change) creates a new **snapshot**.
+        The snapshot log is the source of truth for what the table looked like at any point.
+
+        > **In Delta Lake:** each snapshot corresponds to one JSON file in `_delta_log/`.
+        > In DuckLake, it's rows in the `ducklake_snapshot` SQL table — much cheaper to query.
+        """),
+        snapshots,
+    ])
+    return (conn, snapshots)
+
+
+@app.cell
+def demo_time_travel(conn, snapshots, mo):
+    # Snapshot 2 = after INSERT (before DELETE)
+    past_state = conn.execute("FROM products AT (VERSION => 2)").df()
+    current_state = conn.execute("FROM products").df()
+
+    mo.vstack([
+        mo.md(r"""
+        ## Concept: Time Travel
+
+        Query any table **as it was at a previous snapshot**.
+        This works because the original Parquet files are never deleted — only logically hidden.
+
+        > **In Delta Lake:** `SELECT * FROM table VERSION AS OF 2`
+        > In DuckLake: `FROM table AT (VERSION => 2)` — identical concept.
+        """),
+        mo.md("**Past state (version 2 — before the delete):**"), past_state,
+        mo.md("**Current state:**"), current_state,
+    ])
+    return (conn, past_state)
+
+
+@app.cell
+def demo_changes(conn, past_state, mo):
+    changes = conn.execute(
+        "FROM ducklake_table_changes('lake', 'main', 'products', 2, 3)"
+    ).df()
+
+    mo.vstack([
+        mo.md(r"""
+        ## Concept: Change Data Feed
+
+        Retrieve exactly what changed between two snapshots — inserts, updates, deletes.
+        Useful for incremental processing pipelines.
+
+        > **In Delta Lake:** Change Data Feed (CDF) — enable with
+        > `ALTER TABLE SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')`,
+        > then query with `table_changes('table', startVersion, endVersion)`.
+        """),
+        changes,
+    ])
+    return (conn, changes)
+
+
+@app.cell
+def demo_rollback(conn, changes, mo):
+    conn.execute("BEGIN TRANSACTION")
+    conn.execute("DELETE FROM products")
+    mid_tx = conn.execute("FROM products").df()
+    conn.execute("ROLLBACK")
+    after_rollback = conn.execute("FROM products").df()
+
+    mo.vstack([
+        mo.md(r"""
+        ## Concept: ACID Transactions
+
+        Wrap multiple operations in a transaction. If something goes wrong, `ROLLBACK`
+        undoes everything atomically — no partial writes in the lake.
+
+        > **In Delta Lake:** multi-statement transactions are supported within a single
+        > engine session. Cross-engine transactions require a catalog with locking support.
+        > In DuckLake, the catalog DB handles locking natively.
+        """),
+        mo.md("**During transaction (after DELETE, before COMMIT):**"), mid_tx,
+        mo.md("**After ROLLBACK — data is back:**"), after_rollback,
+    ])
+    return (conn, after_rollback)
+
+
 if __name__ == "__main__":
     app.run()
