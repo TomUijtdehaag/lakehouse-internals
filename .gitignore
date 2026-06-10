@@ -8,3 +8,9 @@ wheels/
 
 # Virtual environments
 .venv
+
+# DuckLake demo runtime artifacts
+demo.ducklake
+demo.ducklake.wal
+demo.ducklake.files/
+skills-lock.json
