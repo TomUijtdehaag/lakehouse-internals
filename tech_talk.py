@@ -89,5 +89,55 @@ def catalog_problem(mo):
     """)
 
 
+@app.cell
+def ducklake_intro(mo):
+    return mo.md(r"""
+    ## DuckLake: Go All-In on SQL
+
+    If you need a database for the catalog anyway, why not use it for *all* metadata?
+
+    DuckLake's design: **move every metadata structure into a SQL database**.
+    The Parquet data files stay on blob storage. Everything else — schemas, snapshots,
+    file lists, statistics, column stats — lives in a SQL catalog (DuckDB, PostgreSQL, SQLite).
+
+    ![DuckLake architecture](https://ducklake.select/images/manifesto/ducklake-architecture.png)
+
+    A single SQL transaction records a commit:
+    ```sql
+    BEGIN;
+      INSERT INTO ducklake_data_file VALUES (..., 'path/to/file.parquet', ...);
+      INSERT INTO ducklake_table_stats VALUES (...);
+      INSERT INTO ducklake_snapshot VALUES (...);
+    COMMIT;
+    ```
+
+    ![DuckLake schema](https://ducklake.select/images/manifesto/ducklake-schema-1.png)
+
+    **This is what BigQuery (Spanner) and Snowflake (FoundationDB) do** — just without
+    the open formats at the bottom.
+    """)
+
+
+@app.cell
+def comparison(mo):
+    return mo.md(r"""
+    ## Delta Lake vs DuckLake
+
+    | | Delta Lake | DuckLake |
+    |---|---|---|
+    | **Metadata store** | JSON files in `_delta_log/` | SQL database (DuckDB / Postgres / SQLite) |
+    | **ACID mechanism** | Optimistic concurrency on file writes | Database transactions (native MVCC) |
+    | **Small writes** | Creates many small files, needs compaction | Optionally inlines data into catalog DB |
+    | **Metadata queries** | List + read many files (slow at scale) | Single SQL query (fast) |
+    | **Scale target** | Distributed, cloud-native, PB-scale | Local → distributed via catalog DB |
+    | **Ecosystem** | Spark, Databricks, Flink, Trino | DuckDB-centric (multi-engine on roadmap) |
+    | **License** | Apache 2.0 (Linux Foundation) | MIT (DuckDB Foundation) |
+    | **Production since** | 2019 | v1.0 April 2026 |
+
+    > **For this demo:** We use DuckLake locally because it requires zero infrastructure.
+    > Every concept below maps 1:1 to Delta Lake in production.
+    """)
+
+
 if __name__ == "__main__":
     app.run()
