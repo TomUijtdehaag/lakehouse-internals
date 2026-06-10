@@ -202,5 +202,29 @@ def demo_insert(conn, mo):
     return (conn, data)
 
 
+@app.cell
+def demo_delete(conn, data, mo):
+    conn.execute("DELETE FROM products WHERE id = 2")
+
+    after_delete = conn.execute("FROM products").df()
+    files = conn.execute("FROM glob('demo.ducklake.files/**/*.parquet')").df()
+
+    mo.vstack([
+        mo.md(r"""
+        ## Concept: Deletion Files (No Overwrite)
+
+        Deletes **never modify** the original Parquet file.
+        Instead, a new `-delete.parquet` file is written that marks which rows are gone.
+        The original data file is untouched — this is what enables time travel.
+
+        > **In Delta Lake:** same pattern — a `remove` action in the log plus
+        > a deletion vector (or a separate delete file in older versions).
+        """),
+        mo.md("**Table after delete:**"), after_delete,
+        mo.md("**Files on disk (note the `-delete` file):**"), files,
+    ])
+    return (conn, after_delete)
+
+
 if __name__ == "__main__":
     app.run()
