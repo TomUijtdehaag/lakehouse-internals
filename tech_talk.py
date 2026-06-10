@@ -139,5 +139,40 @@ def comparison(mo):
     """)
 
 
+@app.cell
+def demo_setup(duckdb, mo, os, shutil):
+    # Idempotent: wipe any previous run
+    catalog = "demo.ducklake"
+    files_dir = "demo.ducklake.files"
+    if os.path.exists(catalog):
+        os.remove(catalog)
+    if os.path.exists(files_dir):
+        shutil.rmtree(files_dir)
+
+    conn = duckdb.connect()
+    conn.execute("INSTALL ducklake")
+    conn.execute("LOAD ducklake")
+    conn.execute(f"ATTACH 'ducklake:{catalog}' AS lake")
+    conn.execute("USE lake")
+    conn.execute("""
+        CREATE TABLE products (
+            id      INTEGER,
+            name    VARCHAR,
+            price   DECIMAL(10, 2)
+        )
+    """)
+
+    mo.md(r"""
+    ## Demo Setup ✓
+
+    A fresh local DuckLake is attached as `lake`.
+    Metadata lives in `demo.ducklake` (a DuckDB file).
+    Parquet data files will appear in `demo.ducklake.files/`.
+
+    Run cells below **in order** to walk through each concept.
+    """)
+    return (conn,)
+
+
 if __name__ == "__main__":
     app.run()
