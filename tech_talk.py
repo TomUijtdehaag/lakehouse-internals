@@ -314,5 +314,34 @@ def demo_rollback(conn, changes, mo):
     return (conn, after_rollback)
 
 
+@app.cell
+def demo_schema_evolution(conn, after_rollback, mo):
+    # Add a column
+    conn.execute("ALTER TABLE products ADD COLUMN category VARCHAR")
+    conn.execute("UPDATE products SET category = 'Dairy' WHERE name = 'Gouda'")
+    conn.execute("UPDATE products SET category = 'Bakery' WHERE name = 'Hagelslag'")
+
+    current = conn.execute("FROM products").df()
+    old_snapshot = conn.execute("FROM products AT (VERSION => 2)").df()
+    new_snapshots = conn.execute("FROM ducklake_snapshots('lake')").df()
+
+    mo.vstack([
+        mo.md(r"""
+        ## Advanced: Schema Evolution + Time Travel
+
+        Add a column to a live table without rewriting data.
+        Old snapshots show `NULL` for the new column — the schema change is tracked
+        as its own snapshot, so time travel still works correctly.
+
+        > **In Delta Lake:** `ALTER TABLE ADD COLUMN` — identical behavior.
+        > Schema history is stored in the transaction log.
+        """),
+        mo.md("**Current table (with new `category` column):**"), current,
+        mo.md("**Snapshot 2 (before schema change — `category` is NULL):**"), old_snapshot,
+        mo.md("**Full snapshot log:**"), new_snapshots,
+    ])
+    return (conn, current)
+
+
 if __name__ == "__main__":
     app.run()
