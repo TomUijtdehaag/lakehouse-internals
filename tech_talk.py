@@ -15,32 +15,146 @@ def imports():
 
 
 @app.cell
-def title():
+def title(mo):
+    mo.md(r"""
+    # Delta Lake: A Lakehouse Format
+
+    ### A Hands-on Tech Talk with DuckLake
+
+    This notebook walks through the key concepts behind Delta Lake —
+    an open table format that brings ACID transactions to data lakes.
+
+    We demo the concepts using **DuckLake**, a modern lakehouse format
+    that implements the same ideas with a SQL database instead of JSON files.
+    Every demo cell includes an **"In Delta Lake, this is..."** callout.
+    """)
     return
 
 
 @app.cell
-def background():
+def background(mo):
+    mo.md(r"""
+    ## Background: The Problem
+
+    ### Storage / Compute Separation
+
+    Modern data platforms separate **storage** (S3, ADLS, GCS) from **compute**
+    (Spark, Trino, DuckDB). Cheap storage + independent scaling — but plain object
+    storage gives you no transactions.
+
+    ![Lakehouse architecture](https://ducklake.select/images/manifesto/lakehouse.jpg)
+
+    ### The ACID Gap
+
+    Plain data lakes store raw files in S3. Without a format layer:
+
+    - **No isolation** — two writers can corrupt each other
+    - **No rollback** — a failed job leaves partial data
+    - **No history** — you cannot query yesterday's state
+    - **No schema enforcement** — anyone can add or drop columns silently
+
+    **Lakehouse formats** (Delta Lake, Iceberg, Hudi, DuckLake) fill this gap.
+    """)
     return
 
 
 @app.cell
-def delta_iceberg():
+def delta_iceberg(mo):
+    mo.md(r"""
+    ## Delta Lake: File-Based Solution
+
+    Delta Lake stores all metadata as **JSON files in `_delta_log/`**.
+    Each file represents one commit — a set of `add` / `remove` actions on Parquet files.
+
+    ![Iceberg / Delta table architecture](https://ducklake.select/images/manifesto/iceberg-table-architecture.png)
+
+    ### How ACID Works
+
+    | ACID property | Delta Lake mechanism |
+    |---|---|
+    | **Atomicity** | Commit = single new JSON file; either written or not |
+    | **Consistency** | Schema checked before each commit |
+    | **Isolation** | Optimistic concurrency on JSON file names |
+    | **Durability** | S3 is durable; commit files are never overwritten |
+
+    ### Time Travel
+
+    Every commit is preserved. `VERSION AS OF N` replays the log to that point.
+    Old Parquet files are never deleted until explicitly vacuumed with `VACUUM`.
+    """)
     return
 
 
 @app.cell
-def catalog_problem():
+def catalog_problem(mo):
+    mo.md(r"""
+    ## The Catalog Problem
+
+    Both Delta Lake and Iceberg evolved to **need a catalog** — a service that
+    tracks which tables exist and where their metadata lives.
+
+    ![Catalog architecture](https://ducklake.select/images/manifesto/iceberg-catalog-architecture.png)
+
+    Without a catalog:
+
+    - Listing tables requires scanning filesystem prefixes
+    - Table renames / drops need out-of-band coordination
+    - Discovery across writers is slow and race-prone
+
+    Popular catalogs: **Hive Metastore**, **AWS Glue**, **Unity Catalog**, **Polaris**
+
+    > **The irony:** we moved from databases (data warehouses) to files on S3 for
+    > scale — and then had to add a database back to keep track of all those files.
+    """)
     return
 
 
 @app.cell
-def ducklake_intro():
+def ducklake_intro(mo):
+    mo.md(r"""
+    ## DuckLake: Go All-In on SQL for Metadata
+
+    DuckLake asks: *what if metadata lived in a real SQL database from the start?*
+
+    - Data still lives in **open Parquet files** (S3 / local disk)
+    - Metadata lives in a **SQL catalog** (DuckDB, PostgreSQL, or SQLite)
+    - No JSON log files, no separate catalog service, no file listing
+
+    ![DuckLake architecture](https://ducklake.select/images/manifesto/ducklake-architecture.png)
+
+    ### The Catalog Schema
+
+    Snapshots, files, columns, and partition info are SQL tables.
+    Metadata queries are instant SQL — no file listing needed.
+
+    ![DuckLake schema](https://ducklake.select/images/manifesto/ducklake-schema-1.png)
+
+    > **For this demo:** one `.ducklake` file = the SQL catalog,
+    > `demo.ducklake.files/` = the Parquet data directory.
+    > In production: swap in Postgres + S3.
+    """)
     return
 
 
 @app.cell
-def comparison():
+def comparison(mo):
+    mo.md(r"""
+    ## Delta Lake vs DuckLake
+
+    |  | Delta Lake | DuckLake |
+    |---|---|---|
+    | Metadata store | JSON files in `_delta_log/` | SQL database (DuckDB / Postgres / SQLite) |
+    | ACID mechanism | Optimistic concurrency on file writes | Database transactions (native MVCC) |
+    | Small writes | Many small files, needs compaction | Optionally inlines data in catalog DB |
+    | Metadata queries | List + read many files (slow at scale) | Single SQL query (fast) |
+    | Scale target | Distributed, cloud-native, PB-scale | Local → distributed via catalog DB |
+    | Ecosystem | Spark, Databricks, Flink, Trino | DuckDB-centric (multi-engine roadmap) |
+    | License | Apache 2.0 (Linux Foundation) | MIT (DuckDB Foundation) |
+    | Production since | 2019 | v1.0 April 2026 |
+
+    ---
+    **The demo below uses DuckLake.** Every cell maps the concept back to Delta Lake.
+    """)
     return
 
 
