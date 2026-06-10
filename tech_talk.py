@@ -174,5 +174,33 @@ def demo_setup(duckdb, mo, os, shutil):
     return (conn,)
 
 
+@app.cell
+def demo_insert(conn, mo):
+    conn.execute("""
+        INSERT INTO products VALUES
+            (1, 'Gouda',       3.49),
+            (2, 'Stroopwafel', 2.19),
+            (3, 'Hagelslag',   1.89)
+    """)
+
+    data = conn.execute("FROM products").df()
+    files = conn.execute("FROM glob('demo.ducklake.files/**/*.parquet')").df()
+
+    mo.vstack([
+        mo.md(r"""
+        ## Concept: Immutable Parquet Files
+
+        After an INSERT, DuckLake writes a new **immutable Parquet file** to storage
+        and records it in the SQL catalog with a new snapshot.
+
+        > **In Delta Lake:** same thing — a Parquet file lands in your S3 prefix,
+        > and `_delta_log/00...01.json` records the `add` action.
+        """),
+        mo.md("**Table contents:**"), data,
+        mo.md("**Parquet files on disk:**"), files,
+    ])
+    return (conn, data)
+
+
 if __name__ == "__main__":
     app.run()
