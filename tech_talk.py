@@ -11,6 +11,33 @@ def imports():
     import os
     import shutil
 
+    _catalog = "demo.ducklake"
+    _files_dir = "demo.ducklake.files"
+
+    # Detach any existing lake so we can delete the catalog file
+    try:
+        mo.sql("USE memory")
+        mo.sql("DETACH lake")
+    except Exception:
+        pass
+
+    if os.path.exists(_catalog):
+        os.remove(_catalog)
+    if os.path.exists(_files_dir):
+        shutil.rmtree(_files_dir)
+
+    mo.sql("INSTALL ducklake")
+    mo.sql("LOAD ducklake")
+    # DATA_INLINING_ROW_LIMIT 0 disables inlining so inserts go directly to Parquet files
+    mo.sql(f"ATTACH 'ducklake:{_catalog}' AS lake (DATA_INLINING_ROW_LIMIT 0)")
+    mo.sql("USE lake")
+    mo.sql("""
+        CREATE OR REPLACE TABLE products (
+            id    INTEGER,
+            name  VARCHAR,
+            price DECIMAL(10, 2)
+        )
+    """)
     return mo, os, shutil
 
 
@@ -138,10 +165,11 @@ def ducklake_intro(mo):
 
 @app.cell
 def delta_log_example(mo, os, shutil):
-
     import json as _json
     import pyarrow as _pa
     from deltalake import write_deltalake as _write_deltalake, DeltaTable as _DeltaTable
+
+    mo.sql("LOAD delta")
 
     # Clean up any previous run
     _delta_path = "demo.delta"
@@ -149,23 +177,28 @@ def delta_log_example(mo, os, shutil):
         shutil.rmtree(_delta_path)
 
     # Write three products in Delta Lake format
-    _data = _pa.table({
-        "id":    [1, 2, 3],
-        "name":  ["Gouda", "Stroopwafel", "Hagelslag"],
-        "price": [3.49, 2.19, 1.89],
-    })
+    _data = _pa.table(
+        {
+            "id": [1, 2, 3],
+            "name": ["Gouda", "Stroopwafel", "Hagelslag"],
+            "price": [3.49, 2.19, 1.89],
+        }
+    )
     _write_deltalake(_delta_path, _data)
 
     # Delete one row — creates a second log entry
     _DeltaTable(_delta_path).delete("id = 2")
+
 
     # Read log files as Python dicts (Marimo renders dicts as interactive trees)
     def _read_log(path):
         with open(path) as _f:
             return [_json.loads(line) for line in _f if line.strip()]
 
+
     _log0 = _read_log(f"{_delta_path}/_delta_log/00000000000000000000.json")
     _log1 = _read_log(f"{_delta_path}/_delta_log/00000000000000000001.json")
+
 
     # Build a pretty file tree
     def _tree(path, prefix=""):
@@ -181,43 +214,45 @@ def delta_log_example(mo, os, shutil):
                 lines += _tree(full, prefix + extension)
         return lines
 
+
     _tree_str = os.path.basename(_delta_path) + "/\n" + "\n".join(_tree(_delta_path))
 
-    mo.vstack([
-        mo.md(r"""
+    mo.vstack(
+        [
+            mo.md(r"""
     ## Delta Lake on Disk — The Transaction Log
 
     Delta Lake stores **all metadata as newline-delimited JSON** in `_delta_log/`.
     Each commit = one new file. We write the products table, delete a row,
     then read the raw log.
     """),
-        mo.md("### Data written to `demo.delta/`"),
-        _DeltaTable(_delta_path).to_pandas(),
-        mo.md("### Files on disk"),
-        mo.md(f"```\n{_tree_str}\n```"),
-        mo.md("### `00000000000000000000.json` — initial write"),
-        mo.md("""\
+            mo.md("### Data written to `demo.delta/`"),
+            mo.sql(f"FROM delta_scan('{_delta_path}')"),
+            mo.md("### Files on disk"),
+            mo.md(f"```\n{_tree_str}\n```"),
+            mo.md("### `00000000000000000000.json` — initial write"),
+            mo.md("""\
     - `commitInfo` — who wrote it, operation, metrics
     - `protocol` — minimum reader/writer version
     - `metaData` — table ID, schema (JSON-in-JSON), partition columns
     - `add` — Parquet file path, size, row stats"""),
-        _log0,
-        mo.md("### `00000000000000000001.json` — delete"),
-        mo.md("""\
+            _log0,
+            mo.md("### `00000000000000000001.json` — delete"),
+            mo.md("""\
     - `commitInfo` — operation = DELETE, predicate = `id = 2`
     - `add` — **new** Parquet file (rows 1 and 3 rewritten)
     - `remove` — **old** Parquet file logically retired (still on disk)
 
     Both Parquet files remain on disk. The log determines current state."""),
-        _log1,
-        mo.md(
-            "> **Key takeaway:** every operation appends a new JSON file. "
-            "To know current state you replay the entire log. "
-            "At scale this becomes slow — which is why catalogs and checkpoints exist. "
-            "**DuckLake replaces this whole log with SQL rows.**"
-        ),
-    ])
-
+            _log1,
+            mo.md(
+                "> **Key takeaway:** every operation appends a new JSON file. "
+                "To know current state you replay the entire log. "
+                "At scale this becomes slow — which is why catalogs and checkpoints exist. "
+                "**DuckLake replaces this whole log with SQL rows.**"
+            ),
+        ]
+    )
     return
 
 
@@ -243,66 +278,39 @@ def comparison(mo):
     return
 
 
-@app.cell
-def demo_setup(mo, os, shutil):
-    _catalog = "demo.ducklake"
-    _files_dir = "demo.ducklake.files"
-
-    # Detach any existing lake so we can delete the catalog file
-    try:
-        mo.sql("USE memory")
-        mo.sql("DETACH lake")
-    except Exception:
-        pass
-
-    if os.path.exists(_catalog):
-        os.remove(_catalog)
-    if os.path.exists(_files_dir):
-        shutil.rmtree(_files_dir)
-
-    mo.sql("INSTALL ducklake")
-    mo.sql("LOAD ducklake")
-    # DATA_INLINING_ROW_LIMIT 0 disables inlining so inserts go directly to Parquet files
-    mo.sql(f"ATTACH 'ducklake:{_catalog}' AS lake (DATA_INLINING_ROW_LIMIT 0)")
-    mo.sql("USE lake")
-    mo.sql("""
-        CREATE OR REPLACE TABLE products (
-            id    INTEGER,
-            name  VARCHAR,
-            price DECIMAL(10, 2)
-        )
-    """)
-
-    setup_done = True
+@app.cell(hide_code=True)
+def _(mo):
     mo.md(r"""
-    ## Demo Setup ✓
-
-    A fresh local DuckLake is attached as `lake`.
-    Metadata lives in `demo.ducklake` (a DuckDB file).
-    Parquet data files will appear in `demo.ducklake.files/`.
-
-    Run cells below **in order** to walk through each concept.
+    # Demo Time!
     """)
-    return (setup_done,)
+    return
 
 
 @app.cell
-def demo_insert(mo, products, setup_done):
-
-    _ = setup_done  # run after setup
-
-    mo.sql("""
-    INSERT INTO products VALUES
-        (1, 'Gouda',       3.49),
-        (2, 'Stroopwafel', 2.19),
-        (3, 'Hagelslag',   1.89)
-    """)
-
+def insert_data(mo, products):
+    mo.sql(
+        """
+        INSERT INTO
+            products
+        VALUES
+            (1, 'Gouda', 3.49),
+            (2, 'Stroopwafel', 2.19),
+            (3, 'Hagelslag', 1.89)
+        """
+    )
     data = mo.sql("FROM products")
-    _files = mo.sql("FROM glob('demo.ducklake.files/**/*.parquet')")
+    return (data,)
 
-    mo.vstack([
-        mo.md(r"""
+
+@app.cell
+def demo_insert(data, mo):
+    import glob as _glob
+
+    _files = sorted(_glob.glob("demo.ducklake.files/**/*.parquet", recursive=True))
+
+    mo.vstack(
+        [
+            mo.md(r"""
         ## Concept: Immutable Parquet Files
 
         After an INSERT, DuckLake writes a new **immutable Parquet file** to storage
@@ -311,23 +319,28 @@ def demo_insert(mo, products, setup_done):
         > **In Delta Lake:** same thing — a Parquet file lands in your S3 prefix,
         > and `_delta_log/00...01.json` records the `add` action.
         """),
-        mo.md("**Table contents:**"), data,
-        mo.md("**Parquet files on disk:**"), _files,
-    ])
-
-    return (data,)
+            mo.md("**Table contents:**"),
+            data,
+            mo.md("**Parquet files on disk:**"),
+            mo.plain_text("\n".join(_files)),
+        ]
+    )
+    return
 
 
 @app.cell
 def demo_delete(data, mo, products):
-
     mo.sql("DELETE FROM products WHERE id = 2")
 
     after_delete = mo.sql("FROM products")
-    _files = mo.sql("FROM glob('demo.ducklake.files/**/*.parquet')")
 
-    mo.vstack([
-        mo.md(r"""
+    import glob as _glob
+
+    _files = sorted(_glob.glob("demo.ducklake.files/**/*.parquet", recursive=True))
+
+    mo.vstack(
+        [
+            mo.md(r"""
         ## Concept: Deletion Files (No Overwrite)
 
         Deletes **never modify** the original Parquet file.
@@ -337,23 +350,25 @@ def demo_delete(data, mo, products):
         > **In Delta Lake:** same pattern — a `remove` action in the log plus
         > a deletion vector (or a separate delete file in older versions).
         """),
-        mo.md(f"Rows before: **{len(data)}** → after delete: **{len(after_delete)}**"),
-        mo.md("**Table after delete:**"), after_delete,
-        mo.md("**Files on disk (note the `-delete` file):**"), _files,
-    ])
-
+            mo.md(f"Rows before: **{len(data)}** → after delete: **{len(after_delete)}**"),
+            mo.md("**Table after delete:**"),
+            after_delete,
+            mo.md("**Files on disk (note the `-delete` file):**"),
+            mo.plain_text("\n".join(_files)),
+        ]
+    )
     return (after_delete,)
 
 
 @app.cell
 def demo_snapshots(after_delete, mo):
-
     _ = after_delete  # run after delete
 
     snapshots = mo.sql("FROM ducklake_snapshots('lake')")
 
-    mo.vstack([
-        mo.md(r"""
+    mo.vstack(
+        [
+            mo.md(r"""
         ## Concept: The Snapshot Log
 
         Every write (INSERT, DELETE, UPDATE, schema change) creates a new **snapshot**.
@@ -362,9 +377,9 @@ def demo_snapshots(after_delete, mo):
         > **In Delta Lake:** each snapshot corresponds to one JSON file in `_delta_log/`.
         > In DuckLake, it's rows in the `ducklake_snapshot` SQL table — much cheaper to query.
         """),
-        snapshots,
-    ])
-
+            snapshots,
+        ]
+    )
     return (snapshots,)
 
 
@@ -376,7 +391,7 @@ def demo_time_travel(mo, products, snapshots):
     insert_snap_id = int(
         snapshots[
             snapshots["changes"].apply(
-                lambda c: list(c.keys()) == ['tables_inserted_into'] if isinstance(c, dict) else False
+                lambda c: list(c.keys()) == ["tables_inserted_into"] if isinstance(c, dict) else False
             )
         ]["snapshot_id"].iloc[0]
     )
@@ -384,8 +399,9 @@ def demo_time_travel(mo, products, snapshots):
     past_state = mo.sql(f"FROM products AT (VERSION => {insert_snap_id})")
     _current = mo.sql("FROM products")
 
-    mo.vstack([
-        mo.md(r"""
+    mo.vstack(
+        [
+            mo.md(r"""
         ## Concept: Time Travel
 
         Query any table **as it was at a previous snapshot**.
@@ -394,10 +410,15 @@ def demo_time_travel(mo, products, snapshots):
         > **In Delta Lake:** `SELECT * FROM table VERSION AS OF 2`
         > In DuckLake: `FROM table AT (VERSION => N)` — identical concept.
         """),
-        mo.md(f"Version {insert_snap_id}: **{len(past_state)} rows** (before delete) — Current: **{len(_current)} rows**"),
-        mo.md(f"**Past state (version {insert_snap_id} — after insert, before delete):**"), past_state,
-        mo.md("**Current state:**"), _current,
-    ])
+            mo.md(
+                f"Version {insert_snap_id}: **{len(past_state)} rows** (before delete) — Current: **{len(_current)} rows**"
+            ),
+            mo.md(f"**Past state (version {insert_snap_id} — after insert, before delete):**"),
+            past_state,
+            mo.md("**Current state:**"),
+            _current,
+        ]
+    )
     return insert_snap_id, past_state
 
 
@@ -409,22 +430,23 @@ def demo_changes(mo, past_state, snapshots):
     _insert_snap_id = int(
         snapshots[
             snapshots["changes"].apply(
-                lambda c: list(c.keys()) == ['tables_inserted_into'] if isinstance(c, dict) else False
+                lambda c: list(c.keys()) == ["tables_inserted_into"] if isinstance(c, dict) else False
             )
         ]["snapshot_id"].iloc[0]
     )
     _delete_snap_id = int(
         snapshots[
             snapshots["changes"].apply(
-                lambda c: list(c.keys()) == ['tables_deleted_from'] if isinstance(c, dict) else False
+                lambda c: list(c.keys()) == ["tables_deleted_from"] if isinstance(c, dict) else False
             )
         ]["snapshot_id"].iloc[0]
     )
 
     changes = mo.sql(f"FROM ducklake_table_changes('lake', 'main', 'products', {_insert_snap_id}, {_delete_snap_id})")
 
-    mo.vstack([
-        mo.md(r"""
+    mo.vstack(
+        [
+            mo.md(r"""
         ## Concept: Change Data Feed
 
         Retrieve exactly what changed between two snapshots — inserts, updates, deletes.
@@ -434,15 +456,15 @@ def demo_changes(mo, past_state, snapshots):
         > `ALTER TABLE SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')`,
         > then query with `table_changes('table', startVersion, endVersion)`.
         """),
-        mo.md(f"Changes from snapshot {_insert_snap_id} → {_delete_snap_id}:"),
-        changes,
-    ])
+            mo.md(f"Changes from snapshot {_insert_snap_id} → {_delete_snap_id}:"),
+            changes,
+        ]
+    )
     return (changes,)
 
 
 @app.cell
 def demo_rollback(changes, mo, products):
-
     _ = changes  # run after changes
 
     mo.sql("BEGIN TRANSACTION")
@@ -451,8 +473,9 @@ def demo_rollback(changes, mo, products):
     mo.sql("ROLLBACK")
     after_rollback = mo.sql("FROM products")
 
-    mo.vstack([
-        mo.md(r"""
+    mo.vstack(
+        [
+            mo.md(r"""
         ## Concept: ACID Transactions
 
         Wrap multiple operations in a transaction. If something goes wrong, `ROLLBACK`
@@ -462,10 +485,12 @@ def demo_rollback(changes, mo, products):
         > engine session. Cross-engine transactions require a catalog with locking support.
         > In DuckLake, the catalog DB handles locking natively.
         """),
-        mo.md("**During transaction (after DELETE, before COMMIT):**"), _mid_tx,
-        mo.md("**After ROLLBACK — data is back:**"), after_rollback,
-    ])
-
+            mo.md("**During transaction (after DELETE, before COMMIT):**"),
+            _mid_tx,
+            mo.md("**After ROLLBACK — data is back:**"),
+            after_rollback,
+        ]
+    )
     return (after_rollback,)
 
 
@@ -483,8 +508,9 @@ def demo_schema_evolution(after_rollback, insert_snap_id, mo, products):
     _old_snapshot = mo.sql(f"FROM products AT (VERSION => {insert_snap_id})")
     _new_snapshots = mo.sql("FROM ducklake_snapshots('lake')")
 
-    mo.vstack([
-        mo.md(r"""
+    mo.vstack(
+        [
+            mo.md(r"""
         ## Advanced: Schema Evolution + Time Travel
 
         Add a column to a live table without rewriting data.
@@ -494,16 +520,19 @@ def demo_schema_evolution(after_rollback, insert_snap_id, mo, products):
         > **In Delta Lake:** `ALTER TABLE ADD COLUMN` — identical behavior.
         > Schema history is stored in the transaction log.
         """),
-        mo.md("**Current table (with new `category` column):**"), current,
-        mo.md(f"**Snapshot {insert_snap_id} (before schema change — `category` is NULL):** {_old_snapshot.shape}"), _old_snapshot,
-        mo.md("**Full snapshot log:**"), _new_snapshots,
-    ])
+            mo.md("**Current table (with new `category` column):**"),
+            current,
+            mo.md(f"**Snapshot {insert_snap_id} (before schema change — `category` is NULL):** {_old_snapshot.shape}"),
+            _old_snapshot,
+            mo.md("**Full snapshot log:**"),
+            _new_snapshots,
+        ]
+    )
     return (current,)
 
 
 @app.cell
 def wrapup(current, mo):
-
     _ = current  # run after schema evolution
 
     mo.md(r"""
@@ -529,7 +558,6 @@ def wrapup(current, mo):
 
     *Both solve the same fundamental problem. The lakehouse pattern is here to stay.*
     """)
-
     return
 
 
