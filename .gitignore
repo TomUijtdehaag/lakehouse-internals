@@ -13,4 +13,8 @@ wheels/
 demo.ducklake
 demo.ducklake.wal
 demo.ducklake.files/
+
+# Delta Lake demo runtime artifacts
+demo.delta/
+
 skills-lock.json

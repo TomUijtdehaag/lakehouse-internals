@@ -1,7 +1,7 @@
 import marimo
 
 __generated_with = "0.23.9"
-app = marimo.App(width="medium")
+app = marimo.App(width="medium", layout_file="layouts/tech_talk.slides.json")
 
 
 @app.cell
@@ -155,6 +155,82 @@ def comparison(mo):
     ---
     **The demo below uses DuckLake.** Every cell maps the concept back to Delta Lake.
     """)
+    return
+
+
+@app.cell
+def delta_log_example(mo, os, shutil):
+
+    import json as _json
+    import pyarrow as _pa
+    from deltalake import write_deltalake as _write_deltalake, DeltaTable as _DeltaTable
+
+    # Clean up any previous run
+    _delta_path = "demo.delta"
+    if os.path.exists(_delta_path):
+        shutil.rmtree(_delta_path)
+
+    # Write three products in Delta Lake format
+    _data = _pa.table({
+        "id":    [1, 2, 3],
+        "name":  ["Gouda", "Stroopwafel", "Hagelslag"],
+        "price": [3.49, 2.19, 1.89],
+    })
+    _write_deltalake(_delta_path, _data)
+
+    # Delete one row — creates a second log entry
+    _DeltaTable(_delta_path).delete("id = 2")
+
+    # Read both log files
+    def _read_log(path):
+        with open(path) as _f:
+            return [_json.loads(line) for line in _f if line.strip()]
+
+    _log0 = _read_log(f"{_delta_path}/_delta_log/00000000000000000000.json")
+    _log1 = _read_log(f"{_delta_path}/_delta_log/00000000000000000001.json")
+
+    # List all files under demo.delta/
+    _all_files = []
+    for _root, _dirs, _files in os.walk(_delta_path):
+        _dirs[:] = sorted(_dirs)
+        for _fname in sorted(_files):
+            _all_files.append(os.path.join(_root, _fname).replace(_delta_path + "/", ""))
+
+    mo.vstack([
+        mo.md(r"""
+    ## Delta Lake on Disk — The Transaction Log
+
+    Delta Lake stores **all metadata as newline-delimited JSON** in `_delta_log/`.
+    Each commit = one new file. Let's write the products table and a delete,
+    then read the raw log.
+    """),
+        mo.md("### All files under `demo.delta/`"),
+        mo.plain_text("\n".join(_all_files)),
+        mo.md("### `_delta_log/00000000000000000000.json` — initial write"),
+        mo.md("""\
+    Actions in this commit:
+    - `commitInfo` — who wrote it, operation, metrics
+    - `protocol` — minimum reader/writer version
+    - `metaData` — table ID, schema (JSON-in-JSON), partition columns
+    - `add` — Parquet file path, size, row stats"""),
+        mo.plain_text(_json.dumps(_log0, indent=2)),
+        mo.md("### `_delta_log/00000000000000000001.json` — delete"),
+        mo.md("""\
+    Actions in this commit:
+    - `commitInfo` — operation = DELETE, predicate = `id = 2`
+    - `add` — **new** Parquet file (rows 1 and 3 rewritten)
+    - `remove` — **old** Parquet file logically retired (still on disk)
+
+    Both Parquet files remain on disk. The log determines current state."""),
+        mo.plain_text(_json.dumps(_log1, indent=2)),
+        mo.md(
+            "> **Key takeaway:** every operation appends a new JSON file. "
+            "To know current state you replay the entire log. "
+            "At scale this becomes slow — which is why catalogs and checkpoints exist. "
+            "**DuckLake replaces this whole log with SQL rows.**"
+        ),
+    ])
+
     return
 
 
