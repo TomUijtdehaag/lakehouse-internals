@@ -181,7 +181,7 @@ def delta_log_example(mo, os, shutil):
     # Delete one row — creates a second log entry
     _DeltaTable(_delta_path).delete("id = 2")
 
-    # Read both log files
+    # Read log files as Python dicts (Marimo renders dicts as interactive trees)
     def _read_log(path):
         with open(path) as _f:
             return [_json.loads(line) for line in _f if line.strip()]
@@ -189,40 +189,47 @@ def delta_log_example(mo, os, shutil):
     _log0 = _read_log(f"{_delta_path}/_delta_log/00000000000000000000.json")
     _log1 = _read_log(f"{_delta_path}/_delta_log/00000000000000000001.json")
 
-    # List all files under demo.delta/
-    _all_files = []
-    for _root, _dirs, _files in os.walk(_delta_path):
-        _dirs[:] = sorted(_dirs)
-        for _fname in sorted(_files):
-            _all_files.append(os.path.join(_root, _fname).replace(_delta_path + "/", ""))
+    # Build a pretty file tree
+    def _tree(path, prefix=""):
+        lines = []
+        entries = sorted(os.listdir(path))
+        for i, entry in enumerate(entries):
+            is_last = i == len(entries) - 1
+            connector = "└── " if is_last else "├── "
+            full = os.path.join(path, entry)
+            lines.append(prefix + connector + entry + ("/" if os.path.isdir(full) else ""))
+            if os.path.isdir(full):
+                extension = "    " if is_last else "│   "
+                lines += _tree(full, prefix + extension)
+        return lines
+
+    _tree_str = os.path.basename(_delta_path) + "/\n" + "\n".join(_tree(_delta_path))
 
     mo.vstack([
         mo.md(r"""
     ## Delta Lake on Disk — The Transaction Log
 
     Delta Lake stores **all metadata as newline-delimited JSON** in `_delta_log/`.
-    Each commit = one new file. Let's write the products table and a delete,
+    Each commit = one new file. We write the products table, delete a row,
     then read the raw log.
     """),
-        mo.md("### All files under `demo.delta/`"),
-        mo.plain_text("\n".join(_all_files)),
-        mo.md("### `_delta_log/00000000000000000000.json` — initial write"),
+        mo.md("### Files on disk"),
+        mo.md(f"```\n{_tree_str}\n```"),
+        mo.md("### `00000000000000000000.json` — initial write"),
         mo.md("""\
-    Actions in this commit:
     - `commitInfo` — who wrote it, operation, metrics
     - `protocol` — minimum reader/writer version
     - `metaData` — table ID, schema (JSON-in-JSON), partition columns
     - `add` — Parquet file path, size, row stats"""),
-        mo.plain_text(_json.dumps(_log0, indent=2)),
-        mo.md("### `_delta_log/00000000000000000001.json` — delete"),
+        _log0,
+        mo.md("### `00000000000000000001.json` — delete"),
         mo.md("""\
-    Actions in this commit:
     - `commitInfo` — operation = DELETE, predicate = `id = 2`
     - `add` — **new** Parquet file (rows 1 and 3 rewritten)
     - `remove` — **old** Parquet file logically retired (still on disk)
 
     Both Parquet files remain on disk. The log determines current state."""),
-        mo.plain_text(_json.dumps(_log1, indent=2)),
+        _log1,
         mo.md(
             "> **Key takeaway:** every operation appends a new JSON file. "
             "To know current state you replay the entire log. "
