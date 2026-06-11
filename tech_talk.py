@@ -1,7 +1,7 @@
 import marimo
 
 __generated_with = "0.23.9"
-app = marimo.App(width="medium", layout_file="layouts/tech_talk.slides.json")
+app = marimo.App(width="medium")
 
 
 @app.cell
@@ -137,28 +137,6 @@ def ducklake_intro(mo):
 
 
 @app.cell
-def comparison(mo):
-    mo.md(r"""
-    ## Delta Lake vs DuckLake
-
-    |  | Delta Lake | DuckLake |
-    |---|---|---|
-    | Metadata store | JSON files in `_delta_log/` | SQL database (DuckDB / Postgres / SQLite) |
-    | ACID mechanism | Optimistic concurrency on file writes | Database transactions (native MVCC) |
-    | Small writes | Many small files, needs compaction | Optionally inlines data in catalog DB |
-    | Metadata queries | List + read many files (slow at scale) | Single SQL query (fast) |
-    | Scale target | Distributed, cloud-native, PB-scale | Local → distributed via catalog DB |
-    | Ecosystem | Spark, Databricks, Flink, Trino | DuckDB-centric (multi-engine roadmap) |
-    | License | Apache 2.0 (Linux Foundation) | MIT (DuckDB Foundation) |
-    | Production since | 2019 | v1.0 April 2026 |
-
-    ---
-    **The demo below uses DuckLake.** Every cell maps the concept back to Delta Lake.
-    """)
-    return
-
-
-@app.cell
 def delta_log_example(mo, os, shutil):
 
     import json as _json
@@ -213,6 +191,8 @@ def delta_log_example(mo, os, shutil):
     Each commit = one new file. We write the products table, delete a row,
     then read the raw log.
     """),
+        mo.md("### Data written to `demo.delta/`"),
+        _DeltaTable(_delta_path).to_pandas(),
         mo.md("### Files on disk"),
         mo.md(f"```\n{_tree_str}\n```"),
         mo.md("### `00000000000000000000.json` — initial write"),
@@ -238,6 +218,28 @@ def delta_log_example(mo, os, shutil):
         ),
     ])
 
+    return
+
+
+@app.cell
+def comparison(mo):
+    mo.md(r"""
+    ## Delta Lake vs DuckLake
+
+    |  | Delta Lake | DuckLake |
+    |---|---|---|
+    | Metadata store | JSON files in `_delta_log/` | SQL database (DuckDB / Postgres / SQLite) |
+    | ACID mechanism | Optimistic concurrency on file writes | Database transactions (native MVCC) |
+    | Small writes | Many small files, needs compaction | Optionally inlines data in catalog DB |
+    | Metadata queries | List + read many files (slow at scale) | Single SQL query (fast) |
+    | Scale target | Distributed, cloud-native, PB-scale | Local → distributed via catalog DB |
+    | Ecosystem | Spark, Databricks, Flink, Trino | DuckDB-centric (multi-engine roadmap) |
+    | License | Apache 2.0 (Linux Foundation) | MIT (DuckDB Foundation) |
+    | Production since | 2019 | v1.0 April 2026 |
+
+    ---
+    **The demo below uses DuckLake.** Every cell maps the concept back to Delta Lake.
+    """)
     return
 
 
