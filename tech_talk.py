@@ -118,6 +118,15 @@ def delta_write_view(Path, mo, shutil, tree):
     _write_deltalake(delta_path, _data)
     DeltaTable(delta_path).delete("id = 2")
 
+    _data2 = _pa.table(
+        {
+            "id": [4, 5],
+            "name": ["Speculaas", "Bitterballen"],
+            "price": [1.59, 4.29],
+        }
+    )
+    _write_deltalake(delta_path, _data2, mode="append")
+
     _tree_str = delta_path.name + "/\n" + "\n".join(tree(delta_path))
 
     mo.vstack(
@@ -125,10 +134,11 @@ def delta_write_view(Path, mo, shutil, tree):
             mo.md("""
             1. **Commit 0** -- `write_deltalake(path, data)` writes 3 rows as one Parquet file, appends `_delta_log/0...0.json` with `add` action.
             2. **Commit 1** -- `DeltaTable(path).delete("id = 2")` rewrites the Parquet without row 2, appends `_delta_log/0...1.json` with `add` + `remove` actions.
+            3. **Commit 2** -- second `write_deltalake(path, data2, mode="append")` adds 2 new rows as a fresh Parquet file, appends `_delta_log/0...2.json` with `add` action.
     """),
-            mo.md("**Current state via `delta_scan` -- 2 rows:**"),
+            mo.md("**Current state via `delta_scan` -- 4 rows:**"),
             mo.sql(f"FROM delta_scan('{delta_path}')"),
-            mo.md("**Files on disk -- 2 Parquet files (original + rewrite), 2 log entries:**"),
+            mo.md("**Files on disk -- 3 Parquet files (original + rewrite + append), 3 log entries:**"),
             mo.md(f"```\n{_tree_str}\n```"),
         ]
     )
@@ -450,6 +460,57 @@ def demo_delete(Path, after_delete, data, duckdb, mo):
     return
 
 
+@app.cell
+def _(mo, products):
+    second_write = mo.sql(
+        f"""
+        INSERT INTO products VALUES (4, 'Speculaas', 1.59), (5, 'Bitterballen', 4.29);
+
+        FROM products
+        """
+    )
+    return (second_write,)
+
+
+@app.cell(hide_code=True)
+def _(Path, mo, second_write):
+    _files = sorted(Path("demo.ducklake.files").rglob("*.parquet"))
+
+    mo.vstack(
+        [
+            mo.md(r"""
+    ## Concept: Second Write After a Delete
+
+    A second INSERT writes a **brand-new immutable Parquet file** alongside the existing ones.
+    The delete file from the previous step is untouched.
+    The catalog records a new snapshot for this write.
+
+    > **In Delta Lake:** same pattern — a new `add` action lands in `_delta_log/`,
+    > pointing to the freshly written Parquet file.
+    """),
+            mo.md("**Current rows (insert + delete + insert):**"),
+            second_write,
+            mo.md("**Files on disk — original data file, delete file, and new data file:**"),
+            mo.plain_text("\n".join(str(f) for f in _files)),
+        ]
+    )
+    return
+
+
+@app.cell
+def _(Path, mo):
+    dl_preview_data = mo.ui.file_browser(Path("demo.ducklake.files/main/products"), multiple=False)
+    return (dl_preview_data,)
+
+
+@app.cell
+def _(dl_preview_data, mo):
+    _dl_path = dl_preview_data.path()
+
+    mo.vstack([dl_preview_data] + ([mo.sql(f"from '{_dl_path}'")] if (_dl_path and _dl_path.suffix == ".parquet") else []))
+    return
+
+
 @app.cell(hide_code=True)
 def demo_snapshots(after_delete, mo):
     _ = after_delete  # run after delete
@@ -669,6 +730,18 @@ def _(mo, products):
         WHERE
             name = 'Hagelslag';
 
+        UPDATE products
+        SET
+            category = 'Bakery'
+        WHERE
+            name = 'Speculaas';
+
+        UPDATE products
+        SET
+            category = 'Snacks'
+        WHERE
+            name = 'Bitterballen';
+
         FROM
             products
         """
@@ -702,9 +775,11 @@ def _(mo):
 @app.cell(hide_code=True)
 def scale_control(mo):
     batches = mo.ui.slider(1, 10, value=5, label="Batches", show_value=True)
-    scale = mo.ui.slider(3, 9, value=7, label="Scale ( x 10 ^ s )", show_value=True)
+    scale = mo.ui.slider(3, 9, value=8, label="Scale ( x 10 ^ s )", show_value=True)
     batch_btn = mo.ui.run_button(label="Insert batches")
-    partition_by = mo.ui.dropdown(["none", "year", "category"], value="none", label="Partition by")
+
+    transforms = {"year": "year(order_date)", "category": "category"}
+    partition_by = mo.ui.multiselect(list(transforms.keys()), label="Partition by")
 
     mo.vstack(
         [
@@ -713,23 +788,26 @@ def scale_control(mo):
             partition_by,
         ]
     )
-    return batch_btn, batches, partition_by, scale
-
-
-@app.cell
-def _(mo, scale):
-    batch_size = 10**scale.value
-    mo.stat(batch_size)
-    return (batch_size,)
+    return batch_btn, batches, partition_by, scale, transforms
 
 
 @app.cell(hide_code=True)
-def _(Path, batch_btn, batch_size, batches, mo, partition_by, shutil, tree):
+def _(
+    Path,
+    batch_btn,
+    batches,
+    mo,
+    partition_by,
+    scale,
+    shutil,
+    transforms,
+    tree,
+):
     _ = batch_btn.value
 
     if batch_btn.value:
-        _batch = batch_size
-        _part_col = partition_by.value
+        _batch = 10**scale.value
+        _part_cols = partition_by.value
 
         mo.sql("DROP TABLE IF EXISTS scale_demo")
 
@@ -747,9 +825,9 @@ def _(Path, batch_btn, batch_size, batches, mo, partition_by, shutil, tree):
             )
         """)
 
-        if _part_col != "none":
-            _transforms = {"year": "year(order_date)", "category": "category"}
-            mo.sql(f"ALTER TABLE scale_demo SET PARTITIONED BY ({_transforms[_part_col]})")
+        if _part_cols:
+            _part_expr = ", ".join(transforms[c] for c in _part_cols)
+            mo.sql(f"ALTER TABLE scale_demo SET PARTITIONED BY ({_part_expr})")
 
         for _b in range(batches.value):
             _offset = _b * _batch
@@ -757,9 +835,11 @@ def _(Path, batch_btn, batch_size, batches, mo, partition_by, shutil, tree):
                 INSERT INTO scale_demo (id, amount, order_date, category)
                 SELECT generate_series + {_offset}, floor(random() * 5 + 1),
                        DATE '2024-01-01' + (random() * 730)::INT,
-                       CASE (generate_series % 3)
+                       CASE (generate_series % 5)
                            WHEN 0 THEN 'electronics'
                            WHEN 1 THEN 'clothing'
+                           WHEN 2 THEN 'sports'
+                           WHEN 3 THEN 'drinks'
                            ELSE 'food'
                        END
                 FROM generate_series(1, {_batch})
@@ -777,7 +857,7 @@ def _(Path, batch_btn, batch_size, batches, mo, partition_by, shutil, tree):
     _total = mo.sql("SELECT COUNT(*) AS n FROM scale_demo")
 
     _fpv = None
-    if partition_by.value != "none":
+    if partition_by.value:
         _fpv = mo.sql("""
             SELECT p.partition_value, d.file_size_bytes, d.record_count
             FROM __ducklake_metadata_lake.ducklake_file_partition_value p
@@ -801,8 +881,8 @@ def _(Path, batch_btn, batch_size, batches, mo, partition_by, shutil, tree):
     _t_filtered_ms = (_time.perf_counter() - _t0) * 1000
 
     _total_files = int(_info["file_count"].iloc[0])
-    if partition_by.value == "category" and _fpv is not None and len(_fpv) > 0:
-        _matched_files = int((_fpv["partition_value"] == "electronics").sum())
+    if "category" in partition_by.value and _fpv is not None and len(_fpv) > 0:
+        _matched_files = int((_fpv["partition_value"].astype(str).str.contains("electronics")).sum())
     else:
         _matched_files = _total_files
 
@@ -810,6 +890,8 @@ def _(Path, batch_btn, batch_size, batches, mo, partition_by, shutil, tree):
         _tree_str = _data_path.name + "/\n" + "\n".join(tree(_data_path))
     else:
         _tree_str = "(no files yet)"
+
+    _part_label = ", ".join(partition_by.value) if partition_by.value else "none"
 
     mo.vstack(
         [
